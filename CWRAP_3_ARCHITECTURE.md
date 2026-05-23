@@ -334,12 +334,12 @@ Traditional tools fail entirely when analyzing language runtimes (embedded inter
 
 ## 12. Why Now? (The Historical Blindspot)
 
-The absence of a tool like `cwrap 3.0` is the result of a historical perfect storm:
+When evaluating a paradigm shift in performance tooling, engineering leaders naturally ask: *"If this architecture is so optimal, why hasn't a major hyperscaler or silicon vendor already built it?"* The absence of a tool like `cwrap 3.0` is the result of a historical perfect storm, caused by corporate silos, industry-wide distractions, and proprietary hoarding:
 
-* The eBPF Distraction: The industry became obsessed with kernel-level observability (`eBPF`), creating a blind spot: for low-latency apps, invoking the kernel is exactly what must be avoided. The user-space hot-path was neglected.
-* Compiler Tooling Maturity: Manipulating the `AST` required forking `GCC`—a monolithic nightmare. The stabilization of `ClangTooling` and `ASTMatchers` finally made source-to-source `C++` rewriting viable.
-* Hardware Synchronization: Ten years ago, raw CPU tick counters produced garbage data due to clock drift. The recent ubiquity of Invariant TSC in modern `x86` and `ARM` architectures finally made pure mathematical profiling viable.
-* Siloed Expertise: Building this requires an extremely rare intersection of skills: `LLVM` compiler engineering, micro-architectural physics, and `HFT` concurrency models.
+* **The Three-Silo Problem:** Building this architecture requires an extremely rare intersection of three disparate domains: LLVM/Clang compiler engineering, micro-architectural hardware physics, and high-performance user-space concurrency (HFT models). Inside mega-corporations, these are strictly separated departments. Compiler teams do not write low-latency network data planes, and hardware architects treat the compiler as a black box. `cwrap 3.0` exists because it bridges the gaps between these corporate silos.
+* **The eBPF Distraction & The `uprobe` Hack:** For the last ten years, the observability industry has been singularly obsessed with kernel-level tracing. `eBPF` is arguably the greatest *kernel* innovation of the century, but the industry became so enamored with it that they abused it to solve *user-space* problems. To trace a C++ application using eBPF, engineers are forced to use `uprobes`—a mechanism that injects a software breakpoint into the user-space binary, violently trapping the execution and forcing a context switch down to the kernel's eBPF virtual machine, only to return the result back to user-space. It is a masterpiece of kernel engineering misapplied to user-land observability. The industry accepted this catastrophic architectural tax as normal, completely neglecting native, inline innovation on the user-space hot-path.
+* **The Proprietary Black Hole:** Has a zero-branch, pure-math AST telemetry system been built before? Almost certainly—inside the proprietary vaults of elite High-Frequency Trading (HFT) firms. However, ultra-low-latency financial institutions do not open-source their competitive advantages. `cwrap 3.0` takes elite, proprietary financial-sector telemetry models and democratizes them for the open-source infrastructure community.
+* **Compiler Tooling Maturity:** Manipulating the `AST` historically required forking `GCC`—a monolithic, unmaintainable nightmare. The recent stabilization of `ClangTooling` and `ASTMatchers` finally made source-to-source `C++` rewriting viable for individual systems architects.
 
 ---
 
