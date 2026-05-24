@@ -441,4 +441,30 @@ In a modern Linux environment, the `OS` scheduler can migrate a thread to a diff
 * **The Unsigned Math Underflow Trap:** In the rare event of cross-socket clock drift where a thread migrates to a lagging core, subtracting the larger start-time from the smaller end-time using unsigned 64-bit integers triggers a massive underflow. This produces an astronomically large, mathematically obvious outlier that the telemetry pipeline trivially identifies and discards.
 * **The Ultimate Failsafe (CPU Isolation):** In truly hostile or legacy hardware environments lacking `Invariant TSC`, the architecture falls back to `OS`-level guarantees. By utilizing strict `cgroup` `CPUSETs`, thread pinning (`sched_setaffinity`), and CPU isolation, `cwrap 3.0` completely removes the `OS` scheduler from the equation, ensuring the instrumented thread never migrates in the first place.
 
+## 16. The Implementation Roadmap & Validation Status
 
+`cwrap 3.0` is currently transitioning from active R&D and architectural specification into a formal implementation phase. To systematically de-risk the engineering process, the development sequence is strictly phased, with the most critical micro-architectural physics already validated via private experimentation.
+
+### Phase 1: Micro-Architectural Physics Validation (Completed)
+Before writing compiler plugins, the core $O(1)$ pure-math telemetry logic was isolated and validated.
+* **Status:** Validated via manual macro injection into standard `C/C++` codebases. 
+* **Outcome:** The hardware instruction fences (`lfence`/`isb`), inline `rdtscp` execution, and logarithmic bucketing (`__builtin_clzll`) successfully execute within the calculated sub-50-cycle deterministic budget without triggering branch prediction pollution.
+
+### Phase 2: The Translation Engine & AST Prototyping (In Progress)
+The highest-risk software component is the Clang `libtooling` source-to-source rewriter. 
+* **Status:** Initial AST Matcher prototypes are actively successfully injecting entry/exit math blocks.
+* **Crucial Milestone:** The rewriter prototype successfully injects the telemetry code without altering the original source line-number count. This ensures that downstream `DWARF` debug symbols, `GDB`/`LLDB` breakpoints, and compiler error messages remain perfectly aligned with the developer's original, un-instrumented source code.
+
+### Phase 3: The Global Pipeline (Upcoming)
+With the AST injection and hardware math validated, development shifts to the data aggregation layer.
+* **Objective:** Implement the `thread_local` Translation Unit (TU) arrays and the `__attribute__((constructor))` linked-list registration.
+* **Concurrency Implementation:** Enforce the Sequence Lock (Seqlock) memory ordering (`Acquire/Release` semantics) to guarantee safe, lock-free 128-bit Tuple reads for the background thread.
+
+### Phase 4: Out-of-Band Exfiltration & Map-Reduce (Upcoming)
+The final software phase separates the telemetry from the host process.
+* **Objective:** Build the background thread responsible for asynchronous linked-list traversal and Map-Reduce aggregation.
+* **Exfiltration:** Implement the Zero-Copy Shared Memory (`shm`) bridge to export the differential snapshots to an isolated, out-of-process sidecar (e.g., Prometheus exporter) without invoking kernel `I/O` on the host application.
+
+### Phase 5: CI/CD & RTOS Integration (Future Topology)
+* **Objective:** Package the final `Clang` plugin into a drop-in replacement compiler wrapper (e.g., `cwrap++`).
+* **Validation:** Execute automated benchmark suites on `PREEMPT_RT` kernels with strict CPU isolation to empirically prove the complete eradication of user-space jitter.
