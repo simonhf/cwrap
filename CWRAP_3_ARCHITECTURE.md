@@ -540,9 +540,11 @@ The final software phase separates the telemetry from the host process.
 * **Objective:** Build the background thread responsible for asynchronous linked-list traversal and Map-Reduce aggregation.
 * **Standardized Exfiltration (Perfetto):** Implement the Zero-Copy Shared Memory (`shm`) bridge. To ensure immediate enterprise viability, the background thread will map the aggregated payloads directly into the binary layout of the **Perfetto / Google Trace Event Format**. By writing to standard memory-mapped formats, Site Reliability Engineering (SRE) teams can connect ingestion engines (Prometheus, Grafana Agent) directly to the telemetry without requiring proprietary parsing sidecars.
 
-### Phase 5: CI/CD & RTOS Integration (Future Topology)
-* **Objective:** Package the final `Clang` plugin into a drop-in replacement compiler wrapper (e.g., `cwrap++`).
-* **Validation:** Execute automated benchmark suites on `PREEMPT_RT` kernels with strict CPU isolation to empirically prove the complete eradication of user-space jitter.
+### Phase 5: The Perfetto Integration Mandate
+To bridge the gap between deterministic C++ execution and enterprise-grade observability, the exfiltration layer is natively architected for standard ecosystem interoperability.
+* **The Perfetto Protocol:** The out-of-band background thread will bypass proprietary binary formats in favor of the **Perfetto Trace Event Format**. By serializing the aggregated Translation Unit payloads into Perfetto-compliant Protobuf/JSON structures, `cwrap 3.0` achieves instant integration with the industry-standard performance-analysis ecosystem.
+* **Unified Trace Context:** This integration allows SRE teams to ingest `cwrap` telemetry directly into the Perfetto UI or Trace Processor. Engineers can perform complex SQL-based queries across the data, generate recursive flame graphs, and—most critically—time-correlate their high-speed C++ instrumentation with global Linux `ftrace` events, providing a holistic, full-stack observability view.
+* **Standardized Identity:** By leveraging Perfetto’s native handling of Thread IDs and process metadata, the framework solves the historical problem of distributed thread tracking across heterogeneous OS boundaries, ensuring that every latency bucket is semantically mapped to the specific CPU core and task that generated it.
 
 ### Phase 6: The MLIR / ClangIR Migration (Architectural Endgame)
 As the LLVM ecosystem matures, the framework will deprecate front-end source rewriting in favor of mid-level dialect transformations.
