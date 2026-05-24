@@ -117,6 +117,24 @@ In massive `CI`/`CD` environments or long-running daemons, bugs may only manifes
 
 This allows the instrumentation to remain dormant (costing only a single, highly predictable branch instruction) until specific programmatic conditions are met. Engineers can set triggers (e.g., `if (latency > 50ms) cwrap_enable_all()`) to dynamically escalate the verbosity of individual functions at runtime. This "flight-recorder" capability captures hyper-detailed deterministic metrics only when a fault occurs, completely bypassing the massive log generation and `I/O` exhaustion of traditional tools.
 
+### 3.13. Translation Unit (TU) Autonomous Registration
+In massive enterprise codebases containing over 100,000 functions, forcing a Clang AST pass to assign a globally unique, consecutive integer ID to every function during a parallel build (`make -j`) is impossible without severe build-system bottlenecks.
+
+`cwrap 3.0` utilizes **Autonomous TU Registration** to preserve parallel compilation:
+* **File-Local Indexing:** The AST pass treats every `.cpp` file (Translation Unit) as a completely isolated universe. It simply allocates a `static thread_local` Tuple Array sized exactly to the number of tracked functions within that specific file, indexing them from `0 to N`.
+* **The Global Linked List:** The AST pre-compiler injects a static initialization constructor (`__attribute__((constructor))`) into each file. Upon application startup, before `main()` executes, these initialization blocks autonomously append their file's local array structure into a global, doubly linked list.
+* **Lock-Free Scraping:** The out-of-band telemetry thread simply walks this linked list, scraping the metrics for the entire process space without the AST ever needing to coordinate global IDs during the compilation phase.
+
+### 3.14. Asynchronous Scatter-Gather (Map-Reduce) Aggregation
+By utilizing OS-Thread-Local Tuple Arrays (`thread_local`) and Translation Unit indexing, `cwrap 3.0` completely eliminates `atomic` locking and cache-line contention on the hot path. However, this creates a data-sharding effect: a highly concurrent function like `process_packet()` executing across 128 cores will generate 128 isolated telemetry slots. Furthermore, inline functions will generate distinct slots for every Translation Unit they are compiled into.
+
+To reconstruct the macro-view without disturbing the host application, the architecture relies on an out-of-band Map-Reduce aggregation phase:
+* **The Gather Phase:** The isolated, low-priority telemetry thread wakes up and walks the global linked list of TU-arrays, executing a lock-free memory read of all active thread-local slots.
+* **The Reduce Phase:** The background thread aggregates (sums) the distributed Tuples matching the same function signature into a single, unified latency distribution. 
+* **Call-Site Contextualization:** Because inlined functions are tracked per Translation Unit, the aggregation engine can optionally keep the data sharded by compiled file. This empowers engineers to see not just that a function is slow, but specifically *which compiled call-site* is suffering from poor cache locality, solving the historical blind spot of inline profiling.
+
+By shifting the computational cost of data aggregation entirely onto a background thread, the primary C++ execution path remains strictly bounded to its $O(1)$ constant-time pure math.
+
 ---
 
 ## 4. Micro-Architectural Physics: Timing & Cache Economics
@@ -337,6 +355,9 @@ Traditional tools fail entirely when analyzing language runtimes (embedded inter
 * Inlining Heuristic Collapse & Recursive Introspection: Injecting telemetry into a getter inflates its `AST` size, potentially causing the compiler to abandon inlining.
     * Solution: `cwrap 3.0` uses Recursive Introspection. Pass 1 instruments the entire codebase. A post-run script identifies micro-functions reporting negligible tick usage and blacklists them for Pass 2, compiling a final binary where macro-architecture is perfectly traced while micro-functions remain untouched and natively inlined.
 * The Tail-Call Optimization (TCO) Tax: By `C++` standard definition, if a function contains a local object with a destructor (such as our `RAII` telemetry guard), the compiler is legally forbidden from applying Tail-Call Optimization (`TCO`). In deeply recursive algorithms, this may convert an O(1) stack footprint into an O(N) footprint.
+* **The Coroutine Memory / Contention Trap:** In modern architectures utilizing millions of multiplexed coroutines (e.g., C++20 coroutines, Go-style green threads), allocating the 1 KB Tuple array per-coroutine results in terabytes of memory bloat. 
+    * **The Naive Fix (Atomics):** Moving the array to a single global state and using `atomic_add` solves the bloat but introduces catastrophic **Cache-Line Bouncing** when multiple threads contend for the same function's bucket, destroying the $O(1)$ determinism.
+    * **The cwrap 3.0 Solution (OS-Thread Sharding):** The architecture strictly separates state. The ephemeral tracking variables (`start_tick`, `child_accumulated`) are allocated locally on the coroutine's 16-byte stack frame. Upon exit, the math is committed to an **OS-Thread-Local** (`thread_local`) Tuple Array. Because modern OS memory controllers use lazy page-faulting for untouched virtual memory (`.tbss`), the unhit buckets consume zero physical RAM, completely solving coroutine memory bloat while maintaining lock-free, zero-contention atomicity.
 
 ---
 
