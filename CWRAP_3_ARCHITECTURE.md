@@ -135,6 +135,20 @@ To reconstruct the macro-view without disturbing the host application, the archi
 
 By shifting the computational cost of data aggregation entirely onto a background thread, the primary C++ execution path remains strictly bounded to its $O(1)$ constant-time pure math.
 
+### 3.15. The Binary as a Live Database (Self-Describing Infrastructure)
+A persistent challenge in massive `C++` codebases is the disconnect between the source code and the compiled reality. To answer structural questions—such as determining exactly where the compiler's heuristics decided to inline a specific utility function—engineers historically rely on parsing gigabytes of static `DWARF` debug symbols using external tools (`objdump`, `nm`). 
+
+Inheriting the introspection philosophy of `cwrap 1.0`, the `cwrap 3.0` AST pass transforms the compiled application into a live, self-describing database. 
+
+Because the AST pre-compiler has perfect semantic awareness during the build, it does not just allocate empty Tuple arrays; it injects static metadata `structs` (Function Signature, Source File, Line Number, and Parent Scope) alongside the arrays in the Translation Unit. When the TU initialization blocks assemble the global linked list, they are effectively building an in-memory relational schema of the application's entire compiled call graph.
+
+By exposing this linked list via the background telemetry thread (or a dedicated inspection socket), engineers can dynamically query the live process as if it were a database:
+* **Topology Queries:** *"List all unique functions currently instrumented in the process footprint."*
+* **Inlining Dispersion:** *"Show me every compiled call-site where `process_header()` was natively inlined by the compiler."*
+* **Contextual Profiling:** *"Return the latency distribution of `process_header()`, grouped by the specific parent function it was inlined into."*
+
+By embedding the structural schema directly into the execution footprint, `cwrap 3.0` completely bypasses the need for external symbol parsing, merging architectural mapping and performance telemetry into a single unified query interface.
+
 ---
 
 ## 4. Micro-Architectural Physics: Timing & Cache Economics
