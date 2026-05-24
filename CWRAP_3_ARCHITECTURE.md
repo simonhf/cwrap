@@ -509,6 +509,13 @@ While theoretically elegant, a Hybrid LLVM IR model introduces a catastrophic op
 
 `cwrap 3.0` rejects the IR pivot to preserve **Cross-Compiler Agnosticism**. By operating strictly as a source-to-source pre-compiler, `cwrap 3.0` outputs 100% standard, compliant `C++20` source code. This instrumented source can be seamlessly handed off to legacy `GCC` environments, `MSVC` for Windows deployments, or proprietary embedded RTOS toolchains. (Furthermore, as detailed in Section 3.5.1, the AST pass perfectly captures hidden backend state-machine overhead without needing IR hooks by exploiting native C++ proxy awaiters).
 
+### 15.8. The `longjmp` Resilience Defense (Non-Local Jump Cleanup)
+Legacy control-flow mechanisms like POSIX `setjmp`/`longjmp` bypass C++ RAII destructors entirely. If a non-local jump occurs, the `cwrap 3.0` RAII guard is never destroyed, leaving the telemetry accumulator in a "hanging" state and corrupting all future recursive self-time calculations.
+
+* **The Pre-Compiler Interception:** During the `Clang AST` pass, the framework performs a structural scan for `longjmp` call sites. 
+* **The "Landing Pad" Injection:** When a `longjmp` is detected, the pre-compiler rewrites the call to a `cwrap`-native proxy. This proxy function automatically executes a "Cleanup Sweep" on the thread’s local telemetry stack—resetting the recursive depth counter and clearing any hanging RAII guards—before performing the actual `longjmp`. 
+* **The Mathematical Polygraph:** By synchronizing the telemetry state *at the landing pad*, we guarantee that the telemetry ledger remains mathematically consistent, even when the underlying code subverts the C++ language specification. This makes `cwrap 3.0` the first observability tool capable of operating safely within the chaotic execution environments of legacy event loops and interpreted language runtimes.
+
 ## 16. The Implementation Roadmap & Validation Status
 
 `cwrap 3.0` is currently transitioning from active R&D and architectural specification into a formal implementation phase. To systematically de-risk the engineering process, the development sequence is strictly phased, with the most critical micro-architectural physics already validated via private experimentation.
