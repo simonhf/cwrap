@@ -445,7 +445,7 @@ A common compiler-engineering critique is why this framework does not simply uti
 
 ### 15.2. The Physics Defense: Instruction Serialization & Pipeline Penalties
 Injecting math directly into the hot path incurs a physical cost. Reading hardware timers requires execution cycles, and the mechanical precision of these instructions dictates the validity of the entire system:
-* **x86 Serialization (`rdtscp` + `lfence`):** The standard `rdtsc` instruction is not serializing. While `rdtscp` guarantees previous instructions have retired, it is strictly a half-barrier; the CPU's Reorder Buffer (ROB) can still aggressively pull subsequent application instructions up into the measurement window. To seal the boundary, the `RAII` guard pairs `rdtscp` with an explicit `lfence`, creating a strict mathematical floor of ≈ 30-45 cycles.
+* **x86 Asymmetric Serialization:** The standard `rdtsc` instruction is not serializing, and `rdtscp` is only a half-barrier. To guarantee an impenetrable timing window, `cwrap 3.0` deploys asymmetric boundary fences per Intel SDM specifications. The entry guard executes `lfence` followed by `rdtsc` (preventing older instructions from bleeding into the timing window). The exit guard executes `rdtscp` followed by `lfence` (preventing subsequent instructions from executing prematurely). This strict bookending establishes the absolute mathematical floor of ≈ 30-45 cycles.
 * **ARM Serialization (`CNTVCT_EL0` + `isb`):** On AArch64, timer reads are subject to speculative reordering. The framework issues an Instruction Synchronization Barrier (`isb`) to flush the CPU pipeline. Because this flush stalls the decode/fetch units (costing up to 14 cycles on modern ARM cores), `cwrap 3.0` explicitly subtracts this known architectural penalty from the final delta.
 * **The AST Threshold Failsafe:** To prevent these baseline cycles from dominating the execution time of tiny functions, the `AST Matcher` relies on Pre-Emptive Node-Weight Pruning, intentionally bypassing trivial getters where the `lfence`/`isb` penalty would skew the proportional overhead.
 
@@ -484,6 +484,13 @@ However, `cwrap 3.0` justifies its AST-level inline math by recognizing the fund
 * **State Accumulation vs. Event Generation:** XRay generates a discrete event for every function call, eventually exhausting memory buffers and requiring costly disk I/O flushes. `cwrap 3.0` generates zero events. It relies entirely on $O(1)$ state accumulation (inline addition to a thread-local array).
 * **Always-On vs. On-Demand:** Because `cwrap 3.0` injects pure arithmetic rather than dynamic jumps to trampoline handlers, it is not an intermittent debugger; it is a permanent, always-on production gauge cluster. It runs 100% of the time with zero dynamic code patching, zero tracing buffer bloat, and zero kernel I/O flushes.
 
+### 15.7. The Hybrid Pass Fallacy & Cross-Compiler Agnosticism
+An advanced critique of pure AST manipulation suggests pivoting to a "Hybrid Pass" model: using the AST strictly to generate a JSON metadata map of function boundaries, and then utilizing a custom LLVM IR pass to inject the telemetry hardware intrinsics *after* the compiler's inlining and coroutine synthesis phases. 
+
+While theoretically elegant, a Hybrid LLVM IR model introduces a catastrophic operational limitation: Vendor Lock-in. An LLVM IR backend pass dictates that the target application can *only* be compiled using Clang. 
+
+`cwrap 3.0` rejects the IR pivot to preserve **Cross-Compiler Agnosticism**. By operating strictly as a source-to-source pre-compiler, `cwrap 3.0` outputs 100% standard, compliant `C++20` source code. This instrumented source can be seamlessly handed off to legacy `GCC` environments, `MSVC` for Windows deployments, or proprietary embedded RTOS toolchains. (Furthermore, as detailed in Section 3.5.1, the AST pass perfectly captures hidden backend state-machine overhead without needing IR hooks by exploiting native C++ proxy awaiters).
+
 ## 16. The Implementation Roadmap & Validation Status
 
 `cwrap 3.0` is currently transitioning from active R&D and architectural specification into a formal implementation phase. To systematically de-risk the engineering process, the development sequence is strictly phased, with the most critical micro-architectural physics already validated via private experimentation.
@@ -506,7 +513,7 @@ With the AST injection and hardware math validated, development shifts to the da
 ### Phase 4: Out-of-Band Exfiltration & Map-Reduce (Upcoming)
 The final software phase separates the telemetry from the host process.
 * **Objective:** Build the background thread responsible for asynchronous linked-list traversal and Map-Reduce aggregation.
-* **Exfiltration:** Implement the Zero-Copy Shared Memory (`shm`) bridge to export the differential snapshots to an isolated, out-of-process sidecar (e.g., Prometheus exporter) without invoking kernel `I/O` on the host application.
+* **Standardized Exfiltration (Perfetto):** Implement the Zero-Copy Shared Memory (`shm`) bridge. To ensure immediate enterprise viability, the background thread will map the aggregated payloads directly into the binary layout of the **Perfetto / Google Trace Event Format**. By writing to standard memory-mapped formats, Site Reliability Engineering (SRE) teams can connect ingestion engines (Prometheus, Grafana Agent) directly to the telemetry without requiring proprietary parsing sidecars.
 
 ### Phase 5: CI/CD & RTOS Integration (Future Topology)
 * **Objective:** Package the final `Clang` plugin into a drop-in replacement compiler wrapper (e.g., `cwrap++`).
