@@ -307,13 +307,29 @@ While `x86` requires heavy intervention, modern `ARM` architectures are inherent
 
 ---
 
-## 9. Resolving the Interpreter & Runtime Blindspot
+## 9. The Real-Time Kernel (PREEMPT_RT) Polygraph
+
+In mission-critical sectors (such as 5G Telco routing, algorithmic trading, and autonomous automotive), standard Linux kernels are often abandoned in favor of Real-Time Operating Systems (RTOS) or `PREEMPT_RT` patched Linux (e.g., Real-time Ubuntu, RHEL for Real Time).
+
+The goal of `PREEMPT_RT` is to break down massive kernel spinlocks, making the OS strictly preemptible and guaranteeing bounded response times for user-space applications. However, infrastructure teams frequently struggle to empirically validate that their migration to an RT kernel has actually eliminated jitter on their specific C++ hot paths. Standard user-space tracers fail to provide this proof because they invoke the kernel themselves, polluting the measurement.
+
+`cwrap 3.0` acts as a mathematical polygraph for Real-Time operating systems.
+
+Because `cwrap 3.0` relies on zero-branch inline arithmetic and never calls the OS to record its telemetry, it is completely immune to tracer-induced jitter. This creates a perfect validation loop for RT environments:
+1. **On Standard Linux:** The `cwrap 3.0` 64-bucket histogram will clearly show the target application's normal execution clustered in the sub-microsecond buckets, with a distinct, violent smearing of outliers in the high-latency buckets representing kernel interruptions.
+2. **On PREEMPT_RT (with CPU Isolation):** When the application is migrated to a properly tuned Real-Time kernel with strict `isolcpus` and IRQ affinity, the `cwrap 3.0` latency histogram must mathematically collapse. The high-latency outlier buckets will flatline to zero, providing absolute, undeniable proof to stakeholders that the OS jitter has been successfully eradicated from the user-space environment.
+
+By deploying `cwrap 3.0`, platform teams no longer have to guess if their `PREEMPT_RT` tuning is effective; they have constant-time, real-world mathematical proof built directly into their binaries.
+
+---
+
+## 10. Resolving the Interpreter & Runtime Blindspot
 
 Traditional tools fail entirely when analyzing language runtimes (embedded interpreters, `DSL` engines, `Zeek` script parsers). Because `cwrap 3.0` maintains an autonomous, context-aware call tree recursively, it breaks this abstraction barrier. By injecting context-forwarding hooks directly into the interpreter’s loop entry points, it tracks the simulated script frames as deep, virtual nodes within its thread-local tracking stack. The resulting telemetry maps native `C++` infrastructure and virtual script execution onto a single, cohesive call-tree visualization.
 
 ---
 
-## 10. Trade-offs & Operational Realities
+## 11. Trade-offs & Operational Realities
 
 * Compilation Time Overheads: Operating directly on the `Clang AST` requires deep semantic parsing, measurably increasing build times.
 * Binary Footprint (`.bss` Bloat): Statically allocated 64-value logarithmic histograms and pure-time accumulators for every tracked function will increase the final binary size and thread-local storage (`.tdata` / `.tbss`) footprint.
@@ -324,7 +340,7 @@ Traditional tools fail entirely when analyzing language runtimes (embedded inter
 
 ---
 
-## 11. Architectural Prerequisites (The "Elite Systems" Clause)
+## 12. Architectural Prerequisites (The "Elite Systems" Clause)
 
 * Hardware Invariant TSC: The underlying CPU must support an Invariant Time Stamp Counter. Older architectures without clock synchronization across dies will experience cross-core tick drift unless threads are strictly pinned.
 * Thread-Per-Core Topology (No Dynamic Teardown): `cwrap 3.0` relies heavily on Thread-Local Storage (`thread_local`) for lock-free cache performance. It assumes a modern, pre-allocated thread-per-core architecture (e.g., `Seastar`, `DPDK`). Dynamically spinning up/destroying `std::thread` pools will result in discarded telemetry when the thread's `TLS` memory is destroyed before the background snapshot thread can read it.
@@ -332,7 +348,7 @@ Traditional tools fail entirely when analyzing language runtimes (embedded inter
 
 ---
 
-## 12. Why Now? (The Historical Blindspot)
+## 13. Why Now? (The Historical Blindspot)
 
 When evaluating a paradigm shift in performance tooling, engineering leaders naturally ask: *"If this architecture is so optimal, why hasn't a major hyperscaler or silicon vendor already built it?"* The absence of a tool like `cwrap 3.0` is the result of a historical perfect storm, caused by corporate silos, industry-wide distractions, and proprietary hoarding:
 
@@ -343,7 +359,7 @@ When evaluating a paradigm shift in performance tooling, engineering leaders nat
 
 ---
 
-## 13. The Language Moat: Why C++ is Uniquely Positioned
+## 14. The Language Moat: Why C++ is Uniquely Positioned
 
 `cwrap 3.0` exploits a combination of bare-metal control and compiler tooling that currently only exists in `C++`.
 
@@ -353,22 +369,24 @@ When evaluating a paradigm shift in performance tooling, engineering leaders nat
 
 In short, `C++` retains a monopoly on this specific observability pattern: it is the only language that combines unmanaged, bare-metal hardware access, guaranteed zero-overhead scoping (`RAII`), and a mature, globally pluggable `AST` manipulation framework.
 
-## 14. Architectural Defenses & Implementation Failsafes
+## 15. Architectural Defenses & Implementation Failsafes
 
 When evaluating an architecture that claims sub-millisecond determinism without kernel intervention, systems engineers rightfully challenge the physics of the implementation. Here is how `cwrap 3.0` defends against the three most critical points of failure:
 
-### 14.1. The Compiler Defense: Why Clang AST over LLVM IR?
+### 15.1. The Compiler Defense: Why Clang AST over LLVM IR?
 A common compiler-engineering critique is why this framework does not simply utilize an `LLVM IR` (Intermediate Representation) pass, which is language-agnostic and operates on a simplified control flow graph. `cwrap 3.0` rejects `LLVM IR` for two fundamental reasons:
 * **Surviving the Optimizer:** The `LLVM` middle-end is aggressively hostile to side-effect-free math. If raw `rdtsc` timing arithmetic is injected at the `IR` level, the optimizer will likely hoist the instructions out of loops, reorder them, or completely obliterate them via Dead-Code Elimination (`DCE`) because it does not recognize the telemetry's external value. By rewriting at the `Clang AST` level, the telemetry is injected *before* `IR` generation, forcing `LLVM` to lower the math as foundational, unalterable program semantics.
 * **Developer Transparency:** `IR` is a black box. If an instrumentation pass causes a segmentation fault, the developer is left reading mangled assembly. By operating on the `AST`, `cwrap 3.0` effectively acts as a source-to-source translator. Developers can inspect the pre-compiled output and see the exact `C++` `RAII` guards sitting perfectly within their written control flow, eliminating compiler-magic anxiety.
 
-### 14.2. The Physics Defense: Mitigating `rdtsc` Pipeline Overhead
+### 15.2. The Physics Defense: Mitigating `rdtsc` Pipeline Overhead
 Injecting "zero-branch" math directly into the hot path still incurs a physical cost. Reading the Time-Stamp Counter (`rdtsc` / `rdtscp`) requires execution cycles. However, `cwrap 3.0` defends this as the absolute mathematical floor for telemetry:
 * **Compared to the Alternatives:** Standard instrumentation requires a `CALL` instruction (introducing prologue/epilogue overhead, branch prediction pollution, and `i-cache` misses). `eBPF` and `uprobes` require a Ring-3 to Ring-0 context switch, destroying sub-millisecond determinism entirely.
 * **The AST Threshold Failsafe:** To prevent the `rdtscp` cycles from dominating the execution time of tiny functions, the `Clang AST Matcher` is configured with a node-weight threshold. It intentionally ignores trivial functions (like simple getters or setters), only wrapping substantive control flows to guarantee the proportional overhead remains negligible.
 
-### 14.3. The Scheduler Defense: Handling Thread Migration & Clock Drift
+### 15.3. The Scheduler Defense: Handling Thread Migration & Clock Drift
 In a modern Linux environment, the `OS` scheduler can migrate a thread to a different physical core mid-execution. If the starting core and ending core have desynchronized tick counters, the resulting math is corrupted. `cwrap 3.0` mitigates this on both hardware and software layers:
 * **Hardware Invariant TSC:** The framework relies on modern `x86` and `ARM` processors featuring `Invariant TSC` (`constant_tsc`, `nonstop_tsc`), which guarantees synchronized tick rates across all cores on the die. 
 * **The Unsigned Math Underflow Trap:** In the rare event of cross-socket clock drift where a thread migrates to a lagging core, subtracting the larger start-time from the smaller end-time using unsigned 64-bit integers triggers a massive underflow. This produces an astronomically large, mathematically obvious outlier that the telemetry pipeline trivially identifies and discards.
 * **The Ultimate Failsafe (CPU Isolation):** In truly hostile or legacy hardware environments lacking `Invariant TSC`, the architecture falls back to `OS`-level guarantees. By utilizing strict `cgroup` `CPUSETs`, thread pinning (`sched_setaffinity`), and CPU isolation, `cwrap 3.0` completely removes the `OS` scheduler from the equation, ensuring the instrumented thread never migrates in the first place.
+
+
