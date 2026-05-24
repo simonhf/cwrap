@@ -52,10 +52,11 @@ To guarantee execution, the `AST` pre-compiler does not inject raw exit logic. I
 ### 3.4. Branchless O(1) Logarithmic Histograms
 To record execution performance without memory explosions or dynamic allocations, `cwrap 3.0` replaces raw event logging with a fixed-size, stack-allocated data structure. 
 
-* Hardware-Accelerated Bucketing: Upon function exit, the elapsed CPU cycles are calculated via hardware timestamp registers (`rdtscp`). To classify this duration without a chain of conditional branch statements, `cwrap 3.0` utilizes the hardware Count Leading Zeros instruction (`lzcnt` via `__builtin_clzll`).
-* The Logarithmic Scale: By subtracting the leading zeros of the tick count from 64, the architecture instantly maps the duration to a base-2 logarithmic index:
-
-    `index = 63 - lzcnt(delta ticks)`
+* **Hardware-Accelerated Bucketing:** Upon function exit, the elapsed CPU cycles are calculated via hardware timestamp registers (`rdtscp`). To classify this duration without a chain of conditional branch statements, `cwrap 3.0` utilizes the hardware Count Leading Zeros intrinsic (`__builtin_clzll`).
+* **The Zero-Delta Hazard & Legacy Silicon:** A critical vulnerability in bitwise execution is the handling of zero. On legacy hardware lacking `BMI1` extensions, the CPU gracefully degrades `lzcnt` to the legacy `bsr` instruction. However, `bsr(0)` is mathematically undefined and will permanently corrupt the bucket index. If an instrumented C++ function executes so rapidly that the cycle delta evaluates to exactly zero, it triggers a catastrophic failure.
+* **The Bitwise OR Guard:** To immunize the architecture against legacy silicon without injecting a pipeline-stalling test branch (`if delta == 0`), `cwrap 3.0` applies a strictly constant-time Bitwise OR guard to the delta before evaluation:
+    `index = 63 - __builtin_clzll(delta_ticks | 1)`
+By forcing a minimum input value of `1`, the architecture gracefully absorbs impossible 0-cycle executions into the lowest latency bucket. This operation guarantees strict mathematical safety across all CPU generations while remaining entirely branchless.
 
 This operation requires zero conditional branches and executes in constant time O(1). A function can execute 10 million times while producing a highly precise distribution curve across 64 discrete latency buckets, consuming only 512 bytes of fixed storage and completely preserving cache locality.
 
@@ -168,6 +169,13 @@ By embedding the structural schema directly into the execution footprint, `cwrap
 ## 4. Micro-Architectural Physics: Timing & Cache Economics
 
 To quantify the efficiency of `cwrap 3.0`, the overhead must be evaluated not in software abstractions, but in raw CPU cycles, L1 cache eviction probabilities, and the mechanical realities of the hardware pipeline.
+
+### Execution Port Contention & IPC Economics
+While `cwrap 3.0` eliminates branches and memory misses, it remains bound by the physics of Instruction-Level Parallelism (ILP). Superscalar execution engines possess a finite number of Execution Ports. 
+
+Integer arithmetic instructions (like the Bitwise OR and `lzcnt`) must be scheduled on specific integer Arithmetic Logic Units (ALUs). If the host application is executing a mathematically dense hot-path that heavily saturates the CPU's primary ALU ports, injecting the telemetry arithmetic will inevitably cause resource stalls. The telemetry instructions will compete with the application's native instructions for decode bandwidth and execution ports, temporarily depressing the application's Instructions-Per-Cycle (IPC).
+
+This resource contention is an inescapable law of hardware observation. However, because `cwrap 3.0` compiles to a mere 3 to 5 micro-ops—many of which are eligible for macro-fusion—the port contention is strictly bounded. By utilizing the framework's **Control Group Personality**, engineering teams can explicitly A/B test their binaries to measure the exact IPC degradation induced by this ALU contention, allowing for precise, mathematically-informed deployment decisions.
 
 ### The Anatomy of Telemetry Overhead
 
