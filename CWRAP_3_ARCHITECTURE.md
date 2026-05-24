@@ -67,6 +67,18 @@ A critical blind spot in nested asynchronous execution paths is identifying the 
 * Self-Time Recursion: Every thread maintains a lock-free accumulator tracking the duration spent inside child scopes. Upon a parent function's exit, it subtracts this accumulated child time from its own total duration before incrementing its lifetime counters.
 * Asynchronous Context Migration: In highly concurrent architectures, an asynchronous task or coroutine may suspend on CPU Core A and resume on CPU Core B. To prevent call-tree corruption, `cwrap 3.0` binds the virtual tracking frame and self-time accumulator to the logical task context (or coroutine promise) rather than strictly to OS thread-local storage, ensuring deterministic recursion regardless of thread-pool migrations.
 
+### 3.5.1. Coroutine Suspension Hooking (`co_await` / `co_yield`)
+In standard `C++` functions, an `RAII` guard is sufficient for tracking execution because variable lifetime perfectly mirrors CPU execution time. C++20 coroutines break this physical assumption. When a coroutine suspends to wait for asynchronous I/O, its local variables (including the telemetry guard) are not destroyed; they are preserved in a heap-allocated state machine. 
+
+If instrumentation relies exclusively on scope destruction, a coroutine spending 10 microseconds on the CPU and 50 milliseconds suspended waiting for a network packet would falsely report 50.01 milliseconds of active CPU consumption, completely destroying the mathematical determinism of the pipeline.
+
+To solve this, the `cwrap 3.0` AST pass utilizes **Suspension Semantic Hooking**:
+* **Targeting Awaitables:** The `AST` Matcher explicitly targets `co_await` and `co_yield` expressions within the `C++` state machine.
+* **Pre-Suspend Pausing:** Immediately before the coroutine yields control back to the scheduler, the pre-compiler injects a hardware clock read, committing the active CPU cycles to the coroutine's virtual tracking frame and pausing the telemetry accumulator.
+* **Post-Resume Clock Reset:** Immediately upon resumption from the scheduler, the pre-compiler injects a fresh `rdtscp` hardware clock read, resetting the baseline.
+
+By instrumenting the internal state machine transitions rather than relying on outer scope boundaries, `cwrap 3.0` flawlessly isolates pure CPU execution time from I/O suspension time.
+
 ### 3.6. Macro-Time Budgeting & Determinism Accountability
 In environments with partial instrumentation, you cannot optimize what you cannot see. `cwrap 3.0` acts as a complete execution ledger for any n-second telemetry window, guaranteeing 100% time accountability.
 
