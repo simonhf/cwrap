@@ -465,6 +465,14 @@ When executed in Diagnostics Mode, the framework performs an empirical Two-Pass 
 
 If a function symbol manifests in the instrumented binary but was absent in the baseline binary, it mathematically proves the compiler refused to inline it due to the telemetry payload. The framework outputs a precise "Inlining Casualty Report," drawing these specific functions to the developer's attention. The engineering team can then surgically add them to the `cwrap` exclusion blacklist or explicitly enforce `__attribute__((always_inline))`, completely eliminating heuristic guesswork.
 
+### 15.6. The LLVM XRay Comparison: Tracing vs. Continuous Telemetry
+A rigorous architectural review must address the existence of `LLVM XRay`, Google’s native instrumentation infrastructure. XRay utilizes highly optimized NOP-sled patching; at compile time, it injects sequences of `NOP` instructions at function boundaries. When inactive, the CPU pipeline executes these `NOP`s with negligible overhead, preserving instruction cache locality far better than legacy `-finstrument-functions` hooks. 
+
+However, `cwrap 3.0` justifies its AST-level inline math by recognizing the fundamental difference between **Intermittent Tracing** and **Continuous Telemetry**:
+* **The XRay "Active" Penalty:** When an XRay trace is dynamically activated, the runtime engine overwrites the `NOP` sled with a `JMP` instruction pointing to a centralized trampoline. This trampoline handler must execute a full register save/restore context switch and write an event payload to a trace buffer. While fast for a tracer, this heavily violates the strict $O(1)$ sub-50-cycle budget, meaning XRay can only be safely activated in brief, intermittent bursts (acting as a flight-data recorder) before tail-latency degrades.
+* **State Accumulation vs. Event Generation:** XRay generates a discrete event for every function call, eventually exhausting memory buffers and requiring costly disk I/O flushes. `cwrap 3.0` generates zero events. It relies entirely on $O(1)$ state accumulation (inline addition to a thread-local array).
+* **Always-On vs. On-Demand:** Because `cwrap 3.0` injects pure arithmetic rather than dynamic jumps to trampoline handlers, it is not an intermittent debugger; it is a permanent, always-on production gauge cluster. It runs 100% of the time with zero dynamic code patching, zero tracing buffer bloat, and zero kernel I/O flushes.
+
 ## 16. The Implementation Roadmap & Validation Status
 
 `cwrap 3.0` is currently transitioning from active R&D and architectural specification into a formal implementation phase. To systematically de-risk the engineering process, the development sequence is strictly phased, with the most critical micro-architectural physics already validated via private experimentation.
