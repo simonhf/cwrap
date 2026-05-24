@@ -360,19 +360,21 @@ While `x86` requires heavy intervention, modern `ARM` architectures are inherent
 
 ---
 
-## 9. The Real-Time Kernel (PREEMPT_RT) Polygraph
+## 9. The Real-Time Kernel Polygraph (PREEMPT_RT & NOHZ_FULL)
 
 In mission-critical sectors (such as 5G Telco routing, algorithmic trading, and autonomous automotive), standard Linux kernels are often abandoned in favor of Real-Time Operating Systems (RTOS) or `PREEMPT_RT` patched Linux (e.g., Real-time Ubuntu, RHEL for Real Time).
 
-The goal of `PREEMPT_RT` is to break down massive kernel spinlocks, making the OS strictly preemptible and guaranteeing bounded response times for user-space applications. However, infrastructure teams frequently struggle to empirically validate that their migration to an RT kernel has actually eliminated jitter on their specific C++ hot paths. Standard user-space tracers fail to provide this proof because they invoke the kernel themselves, polluting the measurement.
+The goal of `PREEMPT_RT` is to break down massive kernel spinlocks, making the OS strictly preemptible and guaranteeing bounded response times for user-space applications. However, `PREEMPT_RT` alone does not eliminate OS jitter; periodic timer interrupts (ticking every 1 to 4 milliseconds) still violently preempt user-space execution to handle scheduler accounting. To achieve true microsecond determinism, infrastructure teams must pair `PREEMPT_RT` with `NOHZ_FULL` (tickless kernels) and strict `isolcpus` thread affinity.
+
+Validating that this complex OS tuning has actually eliminated jitter on the C++ hot path is notoriously difficult. Standard user-space tracers fail to provide this proof because they invoke the kernel themselves, polluting the measurement with the observer effect. 
 
 `cwrap 3.0` acts as a mathematical polygraph for Real-Time operating systems.
 
-Because `cwrap 3.0` relies on zero-branch inline arithmetic and never calls the OS to record its telemetry, it is completely immune to tracer-induced jitter. This creates a perfect validation loop for RT environments:
-1. **On Standard Linux:** The `cwrap 3.0` 64-bucket histogram will clearly show the target application's normal execution clustered in the sub-microsecond buckets, with a distinct, violent smearing of outliers in the high-latency buckets representing kernel interruptions.
-2. **On PREEMPT_RT (with CPU Isolation):** When the application is migrated to a properly tuned Real-Time kernel with strict `isolcpus` and IRQ affinity, the `cwrap 3.0` latency histogram must mathematically collapse. The high-latency outlier buckets will flatline to zero, providing absolute, undeniable proof to stakeholders that the OS jitter has been successfully eradicated from the user-space environment.
+Because `cwrap 3.0` relies on zero-branch inline arithmetic and never calls the OS to record its telemetry, it is completely immune to tracer-induced jitter. This creates a perfect validation loop for platform engineers:
+1. **On Standard Linux (The Bimodal Distribution):** The `cwrap 3.0` histogram will clearly expose OS intrusion as a stark **bimodal distribution**: a tight sub-microsecond cluster representing pure algorithmic execution, and a sparse, distinct cluster in the high-latency buckets representing inescapable kernel timer interruptions.
+2. **On Tuned RT Linux (`NOHZ_FULL` + `isolcpus`):** When the application is migrated to a properly tuned tickless kernel, the `cwrap 3.0` latency histogram must mathematically collapse. The secondary high-latency cluster will flatline to zero, providing absolute, undeniable proof to stakeholders that OS jitter has been successfully eradicated from the user-space environment.
 
-By deploying `cwrap 3.0`, platform teams no longer have to guess if their `PREEMPT_RT` tuning is effective; they have constant-time, real-world mathematical proof built directly into their binaries.
+By deploying `cwrap 3.0`, platform teams no longer have to guess if their `NOHZ_FULL` tuning is effective; they have constant-time, real-world mathematical proof built directly into their binaries.
 
 ---
 
