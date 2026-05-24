@@ -441,6 +441,27 @@ In a modern Linux environment, the `OS` scheduler can migrate a thread to a diff
 * **The Unsigned Math Underflow Trap:** In the rare event of cross-socket clock drift where a thread migrates to a lagging core, subtracting the larger start-time from the smaller end-time using unsigned 64-bit integers triggers a massive underflow. This produces an astronomically large, mathematically obvious outlier that the telemetry pipeline trivially identifies and discards.
 * **The Ultimate Failsafe (CPU Isolation):** In truly hostile or legacy hardware environments lacking `Invariant TSC`, the architecture falls back to `OS`-level guarantees. By utilizing strict `cgroup` `CPUSETs`, thread pinning (`sched_setaffinity`), and CPU isolation, `cwrap 3.0` completely removes the `OS` scheduler from the equation, ensuring the instrumented thread never migrates in the first place.
 
+### 15.4. The Post-Inlining Hook Fallacy & AST Weight Pruning
+A modern critique of source-level rewriting argues that Clang’s `-finstrument-functions-after-inlining` flag renders AST manipulation obsolete. Tools utilizing this post-inlining hook successfully allow the optimizer to eliminate trivial getters before instrumentation is applied. The critique rightfully points out that blindly injecting `RAII` guards into the AST artificially inflates a function's internal weight heuristic, potentially pushing it over the compiler's inlining threshold and causing the exact de-optimization `cwrap` seeks to avoid.
+
+While the critique of AST inflation is valid, relying on post-inlining hooks introduces a fatal micro-architectural compromise:
+* **The Unavoidable `CALL` Tax:** Post-inlining hooks perfectly solve the *selection* problem, but they fail the *physics* problem. For the functions that survive inlining and are ultimately instrumented, the compiler is still forced to inject an ABI `CALL` to an external handler (`__cyg_profile_func_enter`). This introduces the exact same register spills, branch-prediction pollution, and `i-cache` misses that `cwrap 3.0`'s inline arithmetic is designed to eradicate. 
+* **Pre-Emptive Node-Weight Pruning:** To protect the compiler's inlining heuristics without sacrificing the zero-branch inline math, the `cwrap 3.0` AST Matcher utilizes Pre-Emptive Node-Weight Pruning. Before injecting the `RAII` guard, the Clang tool evaluates the total AST node depth and statement count of the target function. Trivial getters, setters, and micro-routines falling below a configurable heuristic threshold are explicitly bypassed. 
+
+By pruning the AST *before* mutation, `cwrap 3.0` perfectly preserves the native AST weight for aggressive compiler inlining, while guaranteeing that the macro-functions that are instrumented execute with pure $O(1)$ inline math rather than a pipeline-stalling `CALL`.
+
+### 15.5. The Diagnostics Personality (Inlining Regression Auditing)
+While Pre-Emptive Node-Weight Pruning catches the vast majority of trivial getters, complex `C++` codebases frequently contain functions sitting exactly on the razor's edge of the compiler's inlining threshold. Injecting telemetry into these edge-case functions may unexpectedly push them over the limit, silently forcing the compiler to emit them as standalone, out-of-line functions.
+
+To combat this silent de-optimization, `cwrap 3.0` introduces **The Diagnostics Personality**: an automated compiler auditing mode designed to explicitly surface inlining casualties.
+
+When executed in Diagnostics Mode, the framework performs an empirical Two-Pass Symbol Diff:
+1. **The Baseline Pass:** The application is compiled natively with zero instrumentation. 
+2. **The Instrumented Pass:** The application is compiled with the full `cwrap 3.0` payload.
+3. **The Symbol Extraction:** A post-link diagnostic script (`nm` / `readelf`) extracts the emitted function symbols from both binaries and diffs them.
+
+If a function symbol manifests in the instrumented binary but was absent in the baseline binary, it mathematically proves the compiler refused to inline it due to the telemetry payload. The framework outputs a precise "Inlining Casualty Report," drawing these specific functions to the developer's attention. The engineering team can then surgically add them to the `cwrap` exclusion blacklist or explicitly enforce `__attribute__((always_inline))`, completely eliminating heuristic guesswork.
+
 ## 16. The Implementation Roadmap & Validation Status
 
 `cwrap 3.0` is currently transitioning from active R&D and architectural specification into a formal implementation phase. To systematically de-risk the engineering process, the development sequence is strictly phased, with the most critical micro-architectural physics already validated via private experimentation.
