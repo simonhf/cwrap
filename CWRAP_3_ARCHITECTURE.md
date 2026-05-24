@@ -68,17 +68,17 @@ A critical blind spot in nested asynchronous execution paths is identifying the 
 * Self-Time Recursion: Every thread maintains a lock-free accumulator tracking the duration spent inside child scopes. Upon a parent function's exit, it subtracts this accumulated child time from its own total duration before incrementing its lifetime counters.
 * Asynchronous Context Migration: In highly concurrent architectures, an asynchronous task or coroutine may suspend on CPU Core A and resume on CPU Core B. To prevent call-tree corruption, `cwrap 3.0` binds the virtual tracking frame and self-time accumulator to the logical task context (or coroutine promise) rather than strictly to OS thread-local storage, ensuring deterministic recursion regardless of thread-pool migrations.
 
-### 3.5.1. Coroutine Suspension Hooking (`co_await` / `co_yield`)
-In standard `C++` functions, an `RAII` guard is sufficient for tracking execution because variable lifetime perfectly mirrors CPU execution time. C++20 coroutines break this physical assumption. When a coroutine suspends to wait for asynchronous I/O, its local variables (including the telemetry guard) are not destroyed; they are preserved in a heap-allocated state machine. 
+### 3.5.1. Coroutine State-Machine Hooking (The Proxy Awaiter)
+In standard `C++` functions, an `RAII` guard is sufficient for tracking execution because variable lifetime perfectly mirrors CPU execution time. C++20 coroutines break this assumption. When a coroutine suspends to wait for I/O, it executes hidden, compiler-generated logic (heap-allocating the frame, saving local registers, and executing symmetric transfer) before yielding to the scheduler. 
 
-If instrumentation relies exclusively on scope destruction, a coroutine spending 10 microseconds on the CPU and 50 milliseconds suspended waiting for a network packet would falsely report 50.01 milliseconds of active CPU consumption, completely destroying the mathematical determinism of the pipeline.
+A naive AST tool that simply injects a hardware clock read immediately before the `co_await` keyword commits a fatal error: it pauses the clock *before* the state machine teardown occurs, erroneously dumping heavy CPU self-time into the "suspended I/O" void.
 
-To solve this, the `cwrap 3.0` AST pass utilizes **Suspension Semantic Hooking**:
-* **Targeting Awaitables:** The `AST` Matcher explicitly targets `co_await` and `co_yield` expressions within the `C++` state machine.
-* **Pre-Suspend Pausing:** Immediately before the coroutine yields control back to the scheduler, the pre-compiler injects a hardware clock read, committing the active CPU cycles to the coroutine's virtual tracking frame and pausing the telemetry accumulator.
-* **Post-Resume Clock Reset:** Immediately upon resumption from the scheduler, the pre-compiler injects a fresh `rdtscp` hardware clock read, resetting the baseline.
+To perfectly capture backend compiler synthesis overhead without abandoning the Clang front-end, the `cwrap 3.0` AST pass utilizes **The Proxy Awaiter Pattern**:
+* **Expression Wrapping:** Instead of isolating the syntactic keyword, the AST Matcher intercepts the awaitable expression itself, wrapping it in a transparent telemetry template: `co_await cwrap::telemetry_awaiter(<original_expr>)`.
+* **Post-Synthesis Pausing (`await_suspend`):** Per the C++20 standard, the compiler invokes `await_suspend()` *after* it has successfully saved the local execution state to the coroutine frame, but strictly before yielding control. The proxy awaiter injects the `rdtscp` clock-pause directly into this method. This mathematically guarantees that all hidden compiler state-machine overhead is accurately billed to the active CPU self-time budget.
+* **Pre-Execution Resumption (`await_resume`):** When the scheduler resumes the coroutine, the compiler invokes `await_resume()` before restoring the application logic. The proxy awaiter injects a fresh `rdtscp` read here, perfectly resetting the baseline for the next execution phase.
 
-By instrumenting the internal state machine transitions rather than relying on outer scope boundaries, `cwrap 3.0` flawlessly isolates pure CPU execution time from I/O suspension time.
+By exploiting the language's native coroutine customization points, `cwrap 3.0` flawlessly tracks the true micro-architectural cost of asynchronous context switching while preserving the strict semantic transparency of AST manipulation.
 
 ### 3.6. Macro-Time Budgeting & Determinism Accountability
 In environments with partial instrumentation, you cannot optimize what you cannot see. `cwrap 3.0` acts as a complete execution ledger for any n-second telemetry window, guaranteeing 100% time accountability.
