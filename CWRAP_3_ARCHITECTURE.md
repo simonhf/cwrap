@@ -49,6 +49,16 @@ Injecting code at the top and bottom of a function is fragile in `C++`. If the a
 
 To guarantee execution, the `AST` pre-compiler does not inject raw exit logic. Instead, it injects a zero-overhead `RAII` (Resource Acquisition Is Initialization) Guard Object at the opening scope. The constructor records the entry timestamp, and the `C++` compiler strictly guarantees the destructor will execute the logarithmic bucketing and recursive subtraction logic upon scope exit, regardless of violent stack unwinding or complex branching.
 
+### 3.3.1. The Pure C Compatibility Bridge (The Cleanup Attribute)
+A critical limitation of modern observability tooling is the assumption of a C++ host environment. Massive legacy infrastructure projects (PostgreSQL, Nginx, Redis) are written in pure `C` and fundamentally lack `RAII`, objects, and destructors. In a pure `C` environment, an early `return`, a `goto`, or a complex macro jump (e.g., Postgres's `PG_CATCH`) will bypass standard exit telemetry, permanently corrupting the recursive call-tree state.
+
+To support pure `C` environments without altering the target's build architecture, the `cwrap 3.0` AST Matcher dynamically adapts its injection payload based on the Translation Unit language standard:
+* When analyzing a `.c` file, the AST pass abandons C++ `RAII` classes entirely.
+* Instead, it relies on the GCC/Clang-specific variable attribute: `__attribute__((cleanup(cwrap_exit_handler)))`.
+* The pre-compiler injects a dummy local variable tagged with this attribute at the opening scope of the `C` function. 
+
+By leveraging this specific compiler extension, `cwrap 3.0` forces the GCC/Clang backend to automatically synthesize deterministic exit-execution paths across all branches, `goto`s, and returns. This perfectly simulates C++ `RAII` destruction semantics in a pure `C` environment, guaranteeing bulletproof macro-time accountability without violating the `C` Application Binary Interface (ABI).
+
 ### 3.4. Branchless O(1) Logarithmic Histograms
 To record execution performance without memory explosions or dynamic allocations, `cwrap 3.0` replaces raw event logging with a fixed-size, stack-allocated data structure. 
 
