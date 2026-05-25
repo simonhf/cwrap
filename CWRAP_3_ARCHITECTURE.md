@@ -550,3 +550,29 @@ To bridge the gap between deterministic C++ execution and enterprise-grade obser
 As the LLVM ecosystem matures, the framework will deprecate front-end source rewriting in favor of mid-level dialect transformations.
 * **Objective:** Port the telemetry injection engine from the Clang `Rewriter` to a native `ClangIR` (MLIR) compiler pass.
 * **Outcome:** Eliminates front-end compilation bloat and AST fragility. By injecting the $O(1)$ pure-math telemetry blocks directly into the C++ semantic IR dialect *before* it is flattened into LLVM IR, the architecture fully unifies with the modern compiler pipeline, achieving absolute cross-platform stability.
+
+## 17. Empirical Deployment & Validation Milestones
+
+To systematically de-risk the framework and provide immediate, actionable performance data (e.g., isolating target hardware determinism from legacy architecture jitter), the deployment of `cwrap 3.0` will follow a staircase of increasing language and runtime complexity. 
+
+This matrix separates the construction of the compiler toolchain from the validation of its output, ensuring the core hardware physics are proven before tackling advanced C++ runtime edge cases.
+
+### Milestone 1: The "Clean Room" C Baseline
+* **Target Profile:** Single-threaded or highly structured event-loop C architectures (e.g., `Redis` command dispatch, `Nginx` worker loops).
+* **Objective:** Validate the raw $O(1)$ execution physics and the Perfetto zero-copy exfiltration bridge. By avoiding C++ ABI complexities, name mangling, and exceptions, this phase provides the definitive, noise-free "Jitter Baseline" for the underlying silicon.
+* **Success Metric:** Generation of stable, cycle-accurate Perfetto histograms showing execution latency distributions without altering the target's baseline throughput.
+
+### Milestone 2: Flat C++ & Standard Library
+* **Target Profile:** Modern, highly optimized C++ codebases that rely on standard OOP and templates but eschew complex asynchronous paradigms (e.g., `DuckDB` execution engine, `LevelDB`).
+* **Objective:** Validate the AST matcher's semantic understanding of C++ template instantiations, standard library containers, and inline expansions, while maintaining exact DWARF debug symbol alignment.
+* **Success Metric:** Flawless injection and telemetry extraction across deeply nested template hierarchies without introducing measurable TLS memory fragmentation.
+
+### Milestone 3: Advanced C++ & The Async Runtime
+* **Target Profile:** High-throughput network proxies or C++20 coroutine-heavy middleware requiring complex stack management (e.g., Meta's `Folly` coroutine library, or the `Seastar` async framework).
+* **Objective:** The "Hardening" phase. Validate the framework's structural resilience against `longjmp`, deep exception-handling stack unwinding, and the suspend/resume lifecycles of stackless coroutines.
+* **Success Metric:** The telemetry Graveyard successfully detects, isolates, and purges orphaned coroutine frames or aborted executions without leaking `thread_local` memory or desyncing the asymmetric entry/exit hardware fences.
+
+### Milestone 4: The Enterprise Monolith
+* **Target Profile:** Massive-scale, dynamically linked corporate repositories operating under extreme concurrency and heavy Thread-Pool churn.
+* **Objective:** Validate the global pipeline's capacity to handle massive Translation Unit (TU) scales and extreme multithreading contention.
+* **Success Metric:** The out-of-band background Map-Reduce thread runs continuously under 90%+ production core-load, successfully traversing the lock-free global registry without introducing scheduler jitter or cross-NUMA node latency penalties to the host application.
