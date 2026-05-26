@@ -397,6 +397,45 @@ To empirically prove the superiority of strictly user-space, AST-injected teleme
 **The Objective:**
 Because `cwrap 3.0` maintains constant-time execution outside the eBPF trap boundary, it acts as an uncompromised observer. The resulting telemetry will isolate the exact nanosecond penalty of the kernel boundary crossing, explicitly exposing how user-space eBPF compromises deterministic execution pipelines.
 
+### 8.3. Proposed Validation Methodology: The L1 Cache Displacement Test
+To empirically prove that `cwrap 3.0` achieves "Stationary Lockdown" and does not pollute the memory hierarchy, the following experiment isolates the impact of telemetry on the L1 data cache during SIMD vectorized execution.
+
+**The Hypothesis:** Standard sampling profilers (and heavy user-space tracing libraries) require massive memory footprints to store stack traces and dynamic strings. When executed during a highly optimized hot-path, the profiler's memory allocations evict the application's working data from the L1/L2 cache, artificially bottlenecking the algorithm's throughput.
+
+**The Methodology:**
+1.  **Baseline Generation:** Execute a continuous stream of AVX2/NEON vectorized matrix multiplications perfectly sized to saturate, but not exceed, the L1 cache. Measure the throughput baseline.
+2.  **Standard Profiling Impact:** Attach `perf` (Linux) or `Instruments` (macOS) to the process. 
+3.  **cwrap 3.0 Impact:** Disable the standard profiler and run the same matrix math natively instrumented with `cwrap 3.0` utilizing the $O(1)$ logarithmic Tuple ring buffers.
+
+**The Objective:**
+Because `cwrap 3.0` allocates a fixed, pre-computed memory perimeter at startup and performs lock-free, stationary bitwise operations, it should fit entirely within the margin of the L1 cache without triggering a single eviction of the matrix data. The resulting throughput graphs will prove that `cwrap 3.0` is the only architecture capable of profiling highly optimized SIMD loops without introducing the observer effect via cache displacement.
+
+### 8.4. Proposed Validation Methodology: The Heuristic Preservation Proof
+To validate the necessity of AST-level Node-Weight Pruning, this experiment demonstrates how blind instrumentation destroys compiler optimization, and how `cwrap 3.0` preserves it.
+
+**The Hypothesis:** Legacy source-code instrumentation blindly wraps all function calls, artificially inflating the instruction count of trivial functions (e.g., getters, setters, vector math). This breaks the compiler's inlining thresholds, resulting in massive call-stack overhead and degraded algorithmic performance. 
+
+**The Methodology:**
+1.  **The Target:** Create a deeply nested, highly mathematical call graph (e.g., a recursive physics solver or heavily abstracted spatial tree) heavily reliant on the compiler inlining trivial functions.
+2.  **Blind Instrumentation:** Compile the binary using `-finstrument-functions`. Analyze the generated assembly to verify the collapse of inline expansion.
+3.  **AST-Aware Instrumentation:** Process the raw source through the `cwrap 3.0` Clang tool, setting the AST Node-Weight pruning threshold to skip trivial math functions. Compile the rewritten C++ code under standard `-O3`.
+
+**The Objective:**
+By inspecting the generated assembly and execution time, analysts will confirm that `cwrap 3.0` successfully injects telemetry exclusively into the macro-architecture loops while leaving the micro-architecture hot-paths untouched, completely preserving the compiler's native inlining heuristics.
+
+### 8.5. Proposed Validation Methodology: The SMT Resource Collision Test
+To prove the value of inline, lock-free telemetry, this experiment isolates the physical ALU theft caused by background profiling daemons on multi-tenant x86 hardware.
+
+**The Hypothesis:** Asynchronous observability daemons (which poll shared memory or kernel buffers) inevitably collide with application threads on the same physical core via Symmetric Multi-Threading (SMT). This collision creates unpredictable ALU resource starvation, introducing severe latency spikes in multi-threaded database or web server architectures.
+
+**The Methodology:**
+1.  **Saturate the Core:** Pin a highly concurrent database query workload to a single physical core with two logical SMT threads. Maximize the ALU pipeline throughput.
+2.  **The Daemon Tax:** Spin up a standard background telemetry daemon to observe the DB process. 
+3.  **The cwrap 3.0 Execution:** Kill the daemon and execute the workload with `cwrap 3.0` native telemetry. 
+
+**The Objective:**
+Because `cwrap 3.0` executes inline via simple bitwise and arithmetic shifts, it requires zero background threads and no asynchronous polling. The telemetry executes sequentially within the application thread's existing time slice, completely eliminating the possibility of SMT thread collisions and proving its safety in hyper-dense cloud environments.
+
 ---
 
 ## 9. The Real-Time Kernel Polygraph (PREEMPT_RT & NOHZ_FULL)
