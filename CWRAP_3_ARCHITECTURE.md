@@ -384,6 +384,19 @@ To set realistic expectations for macroscopic analysis, the following baseline j
 
 Analysts utilizing `cwrap 3.0` must baseline their specific hardware environment against these thresholds before attempting to track microsecond-level regressions.
 
+### 8.2. Proposed Validation Methodology: The eBPF User-Space Tax
+To empirically prove the superiority of strictly user-space, AST-injected telemetry on deterministic hardware (ARM), the following isolation experiment is proposed to measure the true physical cost of legacy observability architectures.
+
+**The Hypothesis:** While eBPF `uprobes` are acceptable on legacy x86 hardware where the 1.5-microsecond context-switch penalty is masked by inherent micro-architectural noise (SMT collisions, micro-op translation), deploying user-space eBPF on highly deterministic ARM environments destroys the physical advantages of the silicon.
+
+**The Methodology:**
+1.  **Baseline Generation (cwrap 3.0):** Execute a localized C++ hot-path (e.g., tight vector math) instrumented exclusively with `cwrap 3.0`. By leveraging native AArch64 `isb` memory fences and reading the `CNTVCT_EL0` hardware timer, we establish a perfectly flat, $O(1)$ latency graph demonstrating the expected 1% to 2% hardware jitter floor.
+2.  **The Injection:** While `cwrap 3.0` continues to monitor the baseline execution, attach a standard eBPF `uprobe` via `bpftrace` to a function within the exact same hot-path. 
+3.  **The Trap Measurement:** The OS kernel will dynamically rewrite the target C++ instruction with an ARM `BRK` exception, forcing a Ring 3 -> Ring 0 -> Ring 3 context switch. 
+
+**The Objective:**
+Because `cwrap 3.0` maintains constant-time execution outside the eBPF trap boundary, it acts as an uncompromised observer. The resulting telemetry will isolate the exact nanosecond penalty of the kernel boundary crossing, explicitly exposing how user-space eBPF compromises deterministic execution pipelines.
+
 ---
 
 ## 9. The Real-Time Kernel Polygraph (PREEMPT_RT & NOHZ_FULL)
