@@ -379,8 +379,8 @@ To set realistic expectations for macroscopic analysis, the following baseline j
   * Primary culprits: Inherent micro-architectural non-determinism. x86 relies on complex variable-length instruction decoding, micro-op translation cache misses, and deep speculative execution pipelines. Furthermore, undocumented, silicon-level power management controllers frequently override OS-level frequency pinning, introducing unavoidable cycle variance at the hardware level.
 * **Standard ARM Linux (e.g., AWS Graviton / Apple Silicon):** * Expected Jitter: **1% to 2%** per deterministic run.
   * The inherent lack of SMT and more predictable instruction decoding natively eliminates the massive latency spikes seen on x86 architectures.
-* **ARM Linux (PREEMPT_RT / Real-Time Kernel):** * Expected Jitter: **< 1%** per deterministic run.
-  * By enforcing strict kernel preemption limits, the OS scheduler is essentially muted, leaving only raw, predictable silicon execution.
+* **ARM/x86 Linux (PREEMPT_RT / Mainline Real-Time Kernel):** * Expected Jitter: **< 1%** per deterministic run.
+  * *Note:* This strictly assumes a modern, mainline-integrated RT kernel (Linux 6.12+). Legacy, out-of-tree RT patchsets frequently suffered from proprietary driver spinlocks that destroyed preemption guarantees. On a properly configured modern RT kernel without driver interference, the OS scheduler is essentially muted, leaving only raw, predictable silicon execution.
 
 Analysts utilizing `cwrap 3.0` must baseline their specific hardware environment against these thresholds before attempting to track microsecond-level regressions.
 
